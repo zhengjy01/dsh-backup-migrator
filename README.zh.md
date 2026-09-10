@@ -17,6 +17,10 @@ DSH 插件有四种来源：npm registry、`github:user/repo#commit`、`link:<�
 ```sh
 dsh plugin --profile web add github:zhengjy01/dsh-backup-migrator
 # 或本地开发：
+# from npm (published package)
+dsh plugin --profile web add dsh-backup-migrator
+
+# or local development
 dsh plugin --profile web add link:/path/to/dsh-backup-migrator
 ```
 

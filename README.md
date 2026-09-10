@@ -17,6 +17,10 @@ DSH plugins come from four sources: npm registry, `github:user/repo#commit`, `li
 ```sh
 dsh plugin --profile web add github:zhengjy01/dsh-backup-migrator
 # or local dev:
+# from npm (published package)
+dsh plugin --profile web add dsh-backup-migrator
+
+# or local development
 dsh plugin --profile web add link:/path/to/dsh-backup-migrator
 ```
 
