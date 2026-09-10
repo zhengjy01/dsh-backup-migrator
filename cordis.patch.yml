@@ -1,0 +1,11 @@
+# dsh-backup-migrator bundle patch: inserts the plugin row into the profile roster.
+# Applied as a profile bundle layer (declared by the `dsh.bundle.patch`
+# manifest field in package.json). Activate with:
+#
+#   dsh plugin --profile web add link:/Users/zhengjunyao/Documents/DSH-test/dsh-backup-migrator
+- insert:
+    - id: backup-migrator
+      name: dsh-backup-migrator
+      config:
+        announceToAgent: true   # 在系统提示中公告插件（工具 + 备份/迁移约定）
+        enabled: true           # 插件总开关
