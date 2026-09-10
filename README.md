@@ -12,6 +12,10 @@ Backup and migrate your DeepSeek Harness plugin environment via a git repository
 
 DSH plugins come from four sources: npm registry, `github:user/repo#commit`, `link:<local path>` and `file:<tgz>`. On a new machine the `link:`/`file:` local paths do not exist — without packing them, those plugins would be lost. This plugin detects them and `npm pack`s each into the backup repo.
 
+## Compatibility
+
+Requires **DeepSeek Harness ≥ 0.1.5-rc.1** (declared as `dsh.engines.dsh` in the package manifest, so the DSH plugin marketplace can report it) and is verified against **0.1.5-rc.1**. This build carries the DSH 0.1.5 adaptations: the strict tool-result contract (lossless-JSON snapshot, `additionalProperties: false` schema validation, and `output.render` returning `ContentBlock[]`) plus executable resolution that survives a launchd-started host whose `PATH` is only `/usr/bin:/bin`.
+
 ## Install
 
 ```sh
