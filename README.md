@@ -4,13 +4,24 @@
 
 Backup and migrate your DeepSeek Harness plugin environment via a git repository on GitHub — VSCode settings-sync style.
 
-- **One command backup**: scan every profile's installed plugins (manifest + load order), plugin configs under `~/.dsh/dsh-*.json` (0600), and **locally-developed plugins** (`link:`/`file:` sources) — the local ones are automatically packed into tarballs so they survive on another machine — then `git commit` + `git push`.
-- **One command restore**: on a new machine, pull/clone the same repo, reinstall every plugin by source (npm/github reinstall online; local sources install offline from the packed tarballs), write back `dsh.profile.bundles`, the user patch layer `cordis.patch.yml` and the config files.
+- **One command backup**: scan every profile's installed plugins (manifest + load order), plugin configs under `~/.dsh/dsh-*.json` (0600), **locally-developed plugins** (`link:`/`file:` sources — the local ones are automatically packed into tarballs so they survive on another machine), and **machine-level aux assets outside the plugin system** (helper scripts under `~/.dsh/scripts` + `com.dsh.*.plist` launchd timers under `~/Library/LaunchAgents`, e.g. TickTick deferred sync) — then `git commit` + `git push`.
+- **One command restore**: on a new machine, pull/clone the same repo, reinstall every plugin by source (npm/github reinstall online; local sources install offline from the packed tarballs), write back `dsh.profile.bundles`, the user patch layer `cordis.patch.yml` and the config files, then drop the scripts/plists back in place (source-machine home paths and the node interpreter are rewritten, and plists are `launchctl load`ed automatically).
 - Backup history = git history (rollback any day).
 
 ## Why tarballs for local plugins?
 
 DSH plugins come from four sources: npm registry, `github:user/repo#commit`, `link:<local path>` and `file:<tgz>`. On a new machine the `link:`/`file:` local paths do not exist — without packing them, those plugins would be lost. This plugin detects them and `npm pack`s each into the backup repo.
+
+## Why also back up "scripts + launchd timers"?
+
+Some DSH side-services deliberately live outside the plugin system — TickTick deferred sync is the canonical example: its launchd timer must keep flushing the staged queue into TickTick while the DSH GUI is closed, so it cannot be a plugin bundle. Those files are scattered:
+
+- `~/.dsh/scripts/ticktick-pending.mjs` (script — invisible to the plugin manifest)
+- `~/Library/LaunchAgents/com.dsh.ticktick-deferred-sync.plist` (timer — under the home dir)
+- `~/.dsh/dsh-ticktick-pending.json` (queue + threshold config — already captured as a `dsh-*.json` config)
+
+A plugin-environment-only backup silently dropped the script and the timer on migration. They now travel in the repo's `aux/` directory: on restore the recorded source home is rewritten to the target home (`/Users/alice` → `/Users/bob`), the node interpreter falls back to this machine's node when the recorded one is absent, files land at their original locations, and plists are `launchctl load -w`ed.
+
 
 ## Compatibility
 
@@ -44,23 +55,29 @@ dshbackup_config repoUrl: git@github.com:user/dsh-backup.git
 
 | Tool | Purpose |
 |---|---|
-| `dshbackup_backup` | scan profiles → build manifest + configs + packed local plugins → commit → push |
-| `dshbackup_restore` | pull/clone the backup repo → reinstall all plugins → restore configs |
-| `dshbackup_verify` | preflight before backup or restore (source reachability, git remote, secrets warning) |
+| `dshbackup_backup` | scan profiles → build manifest + configs + packed local plugins + aux (scripts/timers) → commit → push |
+| `dshbackup_restore` | pull/clone the backup repo → reinstall all plugins → restore configs + scripts/timers |
+| `dshbackup_verify` | preflight before backup or restore (source reachability, git remote, secrets, aux presence) |
 | `dshbackup_list` | backup history (git log) + latest manifest summary |
-| `dshbackup_config` | view/change backupDir, repoUrl, includeSecrets |
+| `dshbackup_config` | view/change backupDir, repoUrl, includeSecrets, includeAux |
 
 Config is stored at `~/.dsh/dsh-backup-migrator.json` (mode 0600).
+
+### HTTP surface (loopback-only, for external agents / verification tooling)
+
+- `GET /api/dsh-backup-migrator/probe` — liveness probe returning `{ ok, plugin, version }`
+- `GET /api/dsh-backup-migrator/status` — read-only: current config + latest backup summary (incl. the aux list)
 
 ### Backup repo layout
 
 ```
 <backupDir>/
-├── manifest.json                # machine + profile + plugin + config index
+├── manifest.json                # machine + profile + plugin + config + aux index
 ├── README.md                    # human-readable summary (auto-generated)
 ├── profiles/<name>/cordis.patch.yml   # user patch layer (if any)
 ├── profiles/<name>/packages/*.tgz     # locally-sourced plugins (npm pack)
-└── configs/...                  # ~/.dsh/dsh-*.json + dsh-* dirs (0600)
+├── configs/...                  # ~/.dsh/dsh-*.json + dsh-* dirs (0600)
+└── aux/                         # scripts/ (helper scripts) + launchagents/ (com.dsh.*.plist)
 ```
 
 ### On a new machine
@@ -70,9 +87,38 @@ Config is stored at `~/.dsh/dsh-backup-migrator.json` (mode 0600).
 2. install this plugin, then:
    dshbackup_config backupDir: <same local dir>
    dshbackup_config repoUrl: <same repo url>
-   dshbackup_restore        # clone + reinstall + restore configs
-3. restart the GUI
+   dshbackup_restore        # clone + reinstall + configs + scripts/timers
+3. restart the GUI (launchd timers need no restart — restore already loaded them)
 ```
+
+### 5-minute restore of TickTick deferred sync
+
+Prerequisite: the backup repo already has an `aux/` section (one new-version `dshbackup_backup` run on the old machine).
+
+```sh
+# 1) on the new machine, install DSH + this plugin, then one command
+dshbackup_config backupDir: ~/dsh-backup
+dshbackup_config repoUrl:   https://github.com/<you>/dsh-backup.git
+dshbackup_restore                 # clone → reinstall plugins → configs → scripts/plist → launchctl load
+
+# 2) verify (10 seconds)
+node ~/.dsh/scripts/ticktick-pending.mjs status       # prints queue/threshold/idle = script OK
+launchctl list | grep com.dsh.ticktick-deferred-sync   # any output = timer loaded
+
+# 3) stage once for real
+node ~/.dsh/scripts/ticktick-pending.mjs stage --by "migration-check" \
+  --json '[{"title":"migration check","content":"source: migration; why: verify deferred sync; done: visible in status"}]'
+node ~/.dsh/scripts/ticktick-pending.mjs status
+```
+
+If step 1 reports a `launchctl` load failure (e.g. blocked by a sandbox), add it manually:
+
+```sh
+launchctl load -w ~/Library/LaunchAgents/com.dsh.ticktick-deferred-sync.plist
+```
+
+> The queue/threshold config `~/.dsh/dsh-ticktick-pending.json` and credentials `~/.dsh/dsh-ticktick.json` are restored as configs (needs `includeSecrets: true` + a private repo). Without credentials the timer still runs but skips writing to TickTick.
+
 
 ## Security
 
