@@ -13,8 +13,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import {
-  isDue, normalizeInterval, scheduleStatus, readState, writeState, startScheduler,
-  DEFAULT_INTERVAL_MINUTES, MIN_INTERVAL_MINUTES,
+  isDue, normalizeInterval, normalizeRetry, scheduleStatus, readState, writeState, startScheduler,
+  DEFAULT_INTERVAL_MINUTES, MIN_INTERVAL_MINUTES, DEFAULT_RETRY_MINUTES, MIN_RETRY_MINUTES,
 } from '../lib/schedule.js'
 
 const failures = []
@@ -26,31 +26,44 @@ function check(name, cond, detail) {
 
 const NOW = Date.parse('2026-09-17T10:00:00.000Z')
 const hoursAgo = (h) => new Date(NOW - h * 3_600_000).toISOString()
+// 调度循环内部用真实 Date.now()，所以循环相关的状态必须按真实时间造，不能用上面的假 NOW
+const realHoursAgo = (h) => new Date(Date.now() - h * 3_600_000).toISOString()
 
 /* ---------------- 1. 纯函数：到期判定 ---------------- */
 console.log('\n[1] isDue / normalizeInterval')
 check('未开启 → 永不到期', isDue({ enabled: false, lastAttemptAt: null, intervalMinutes: 1440, now: NOW }) === false)
 check('开启且从未跑过 → 到期', isDue({ enabled: true, lastAttemptAt: null, intervalMinutes: 1440, now: NOW }) === true)
 check('一天前跑过、间隔一天 → 到期', isDue({ enabled: true, lastAttemptAt: hoursAgo(24), intervalMinutes: 1440, now: NOW }) === true)
-check('10 小时前跑过、间隔一天 → 未到期', isDue({ enabled: true, lastAttemptAt: hoursAgo(10), intervalMinutes: 1440, now: NOW }) === false)
+check('10 小时前成功跑过、间隔一天 → 未到期', isDue({ enabled: true, lastAttemptAt: hoursAgo(10), lastSuccessAt: hoursAgo(10), intervalMinutes: 1440, now: NOW }) === false)
+check('有尝试但从未成功 → 按重试窗口，不再等满一天', isDue({ enabled: true, lastAttemptAt: hoursAgo(10), intervalMinutes: 1440, retryMinutes: 30, now: NOW }) === true)
 check('时间戳损坏 → 到期（不卡死）', isDue({ enabled: true, lastAttemptAt: 'not-a-date', intervalMinutes: 1440, now: NOW }) === true)
 check('时钟回拨（上次时间在未来）→ 到期', isDue({ enabled: true, lastAttemptAt: hoursAgo(-3), intervalMinutes: 1440, now: NOW }) === true)
 check('间隔低于下限被钳到 15 分钟', normalizeInterval(1) === MIN_INTERVAL_MINUTES, String(normalizeInterval(1)))
 check('间隔缺省 = 1440', normalizeInterval(undefined) === DEFAULT_INTERVAL_MINUTES, String(normalizeInterval(undefined)))
 check('间隔为 0 / 负数 / 乱码 → 回落默认', normalizeInterval(0) === DEFAULT_INTERVAL_MINUTES && normalizeInterval(-5) === DEFAULT_INTERVAL_MINUTES && normalizeInterval('x') === DEFAULT_INTERVAL_MINUTES)
 check('15 分钟间隔：16 分钟前 → 到期', isDue({ enabled: true, lastAttemptAt: hoursAgo(16 / 60), intervalMinutes: 15, now: NOW }) === true)
+check('重试间隔下限 5 / 默认 30', normalizeRetry(1) === MIN_RETRY_MINUTES && normalizeRetry(undefined) === DEFAULT_RETRY_MINUTES)
+check('失败连击、已过重试窗口 → 到期',
+  isDue({ enabled: true, lastAttemptAt: hoursAgo(1), lastSuccessAt: hoursAgo(48), intervalMinutes: 1440, retryMinutes: 30, now: NOW }) === true)
+check('失败连击、未到重试窗口 → 不到期',
+  isDue({ enabled: true, lastAttemptAt: hoursAgo(0.25), lastSuccessAt: hoursAgo(48), intervalMinutes: 1440, retryMinutes: 30, now: NOW }) === false)
+check('上一轮成功 → 即便过了重试窗口也等满 interval',
+  isDue({ enabled: true, lastAttemptAt: hoursAgo(1), lastSuccessAt: hoursAgo(1), intervalMinutes: 1440, retryMinutes: 30, now: NOW }) === false)
 
 /* ---------------- 2. 纯函数：scheduleStatus ---------------- */
 console.log('\n[2] scheduleStatus')
 const st = scheduleStatus({ autoBackup: false }, {}, NOW)
 check('未开启时不报下次时间', st.enabled === false && st.nextRunAt === null && st.intervalMinutes === DEFAULT_INTERVAL_MINUTES)
-const st2 = scheduleStatus({ autoBackup: true, backupIntervalMinutes: 1440, autoBackupPush: false }, { lastAttemptAt: hoursAgo(10) }, NOW)
+const st2 = scheduleStatus({ autoBackup: true, backupIntervalMinutes: 1440, autoBackupPush: false }, { lastAttemptAt: hoursAgo(10), lastSuccessAt: hoursAgo(10) }, NOW)
 check('未到期 → 下次时间 = 上次 + 间隔',
   st2.nextRunAt === new Date(NOW - 10 * 3_600_000 + 1440 * 60_000).toISOString(), String(st2.nextRunAt))
 check('autoBackupPush=false 透传为 push=false', st2.push === false)
 const st3 = scheduleStatus({ autoBackup: true }, { lastAttemptAt: hoursAgo(48), consecutiveFailures: 2 }, NOW)
 check('已到期 → due=true 且下次时间 = 现在', st3.due === true && st3.nextRunAt === new Date(NOW).toISOString())
 check('连续失败次数透传', st3.consecutiveFailures === 2)
+const st4 = scheduleStatus({ autoBackup: true, backupIntervalMinutes: 1440, backupRetryMinutes: 30 }, { lastAttemptAt: hoursAgo(0.25), lastSuccessAt: hoursAgo(48) }, NOW)
+check('失败连击未到窗口 → due=false 且 nextRunAt = 上次尝试 + 重试窗口', st4.due === false && st4.nextRunAt === new Date(NOW - 0.25 * 3_600_000 + 30 * 60_000).toISOString(), JSON.stringify({due:st4.due,next:st4.nextRunAt}))
+check('retryMinutes 透传', st4.retryMinutes === 30)
 
 /* ---------------- 3. 状态文件 ---------------- */
 console.log('\n[3] 状态文件读写')
@@ -146,6 +159,37 @@ sched = mkSched({ value: { autoBackup: true } }, async () => { afterDispose++; r
 sched.dispose()
 await sched.tick()
 check('dispose 后 tick 不再执行', afterDispose === 0, String(afterDispose))
+
+// 4.7 push 失败必须算「失败」——否则等于静默丢备份（2026-09-17 首次真实运行就踩到）
+await writeState(stateFile, {})
+sched = mkSched({ value: { autoBackup: true, backupIntervalMinutes: 1440 } },
+  async () => ({ ok: true, git: { committed: true, pushed: false, hash: 'aaa1111', error: 'git push 失败：SSL_ERROR_SYSCALL' } }))
+await sched.tick()
+stAfter = await readState(stateFile)
+check('push 失败 → lastResult.ok=false', stAfter.lastResult && stAfter.lastResult.ok === false, JSON.stringify(stAfter.lastResult))
+check('push 失败 → consecutiveFailures=1', stAfter.consecutiveFailures === 1, String(stAfter.consecutiveFailures))
+check('push 失败 → 不写 lastSuccessAt', !stAfter.lastSuccessAt)
+check('push 失败 → error 保留原文', String(stAfter.lastResult.error).includes('SSL_ERROR_SYSCALL'))
+sched.dispose()
+
+// 4.8 失败连击过了重试窗口 → 不必等满一整天，立刻再试
+await writeState(stateFile, { lastAttemptAt: realHoursAgo(1), lastSuccessAt: realHoursAgo(48), consecutiveFailures: 1 })
+calls = 0
+sched = mkSched({ value: { autoBackup: true, backupIntervalMinutes: 1440, backupRetryMinutes: 30 } },
+  async () => { calls++; return { ok: true, git: {} } })
+await sched.tick()
+check('失败连击过窗口 → 再跑一次', calls === 1, String(calls))
+check('成功后 consecutiveFailures 归零', (await readState(stateFile)).consecutiveFailures === 0)
+sched.dispose()
+
+// 4.9 失败连击未到窗口 → 不跑（不刷屏）
+await writeState(stateFile, { lastAttemptAt: realHoursAgo(0.25), lastSuccessAt: realHoursAgo(48), consecutiveFailures: 1 })
+calls = 0
+sched = mkSched({ value: { autoBackup: true, backupIntervalMinutes: 1440, backupRetryMinutes: 30 } },
+  async () => { calls++; return { ok: true, git: {} } })
+await sched.tick()
+check('失败连击未到窗口 → 不跑', calls === 0, String(calls))
+sched.dispose()
 
 await rm(dir, { recursive: true, force: true })
 

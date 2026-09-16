@@ -60,7 +60,7 @@ dshbackup_config repoUrl: git@github.com:user/dsh-backup.git
 | `dshbackup_restore` | 拉取备份仓库 → 重装全部插件 → 恢复配置与脚本/定时器 |
 | `dshbackup_verify` | 备份前/恢复前预检（源可恢复性、git remote、敏感配置、aux 是否齐备） |
 | `dshbackup_list` | 备份历史（git log）+ 最新备份摘要 |
-| `dshbackup_config` | 查看/修改 backupDir、repoUrl、includeSecrets、includeAux、autoBackup、backupIntervalMinutes、autoBackupPush；不带参数时同时显示定时备份状态 |
+| `dshbackup_config` | 查看/修改 backupDir、repoUrl、includeSecrets、includeAux、autoBackup、backupIntervalMinutes、backupRetryMinutes、autoBackupPush；不带参数时同时显示定时备份状态 |
 
 配置存 `~/.dsh/dsh-backup-migrator.json`（0600）。
 
@@ -71,12 +71,13 @@ dshbackup_config repoUrl: git@github.com:user/dsh-backup.git
 ```text
 dshbackup_config autoBackup: true                 # 总开关（默认关）
 dshbackup_config backupIntervalMinutes: 1440      # 间隔分钟数，最小 15，默认 1440（一天）
+dshbackup_config backupRetryMinutes: 30           # 失败后的重试间隔，最小 5，默认 30（成功则回到上面的间隔）
 dshbackup_config autoBackupPush: false            # 可选：只留本地提交，不自动 push
 ```
 
 - **错过的窗口会补跑**：判定基于「上次尝试时间 + 间隔」，所以机器睡过、DSH 关过之后，**下次启动或唤醒的第一个检查点**就会补上（周期 tick，约每分钟检查一次）。
 - **改配置即时生效**：间隔与开关每个检查点重新读取，不需要重启 GUI。
-- **失败不刷屏**：失败也等满一个完整间隔再重试，并记录连续失败次数；连续失败 3 次会在日志里点名提示。
+- **失败会重试、且不会被当成成功**：一轮里只要没落定（构建失败、git 提交失败、**或 push 失败**）就算失败 → 按 `backupRetryMinutes`（默认 30 分钟）再试，成功后才回到正常间隔。一次网络抖动不会把备份拖到第二天，连续失败 3 次也会在日志里点名提示。（最初版本把「push 失败」记成 `ok: true` 并清零失败计数——等于静默丢备份，已修。）
 - **绝不并发**：上一次备份还在跑时，本次检查直接跳过。
 - **状态可查**：`dshbackup_config`（不带参数）与 `GET /status` 都会返回上次尝试 / 上次成功 / 连续失败 / 下次预计时间；状态写 `~/.dsh/dsh-backup-migrator-state.json`（机器本地运行时状态，**不参与备份**）。
 

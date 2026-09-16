@@ -60,7 +60,7 @@ dshbackup_config repoUrl: git@github.com:user/dsh-backup.git
 | `dshbackup_restore` | pull/clone the backup repo → reinstall all plugins → restore configs + scripts/timers |
 | `dshbackup_verify` | preflight before backup or restore (source reachability, git remote, secrets, aux presence) |
 | `dshbackup_list` | backup history (git log) + latest manifest summary |
-| `dshbackup_config` | view/change backupDir, repoUrl, includeSecrets, includeAux, autoBackup, backupIntervalMinutes, autoBackupPush; also reports scheduler state when called without arguments |
+| `dshbackup_config` | view/change backupDir, repoUrl, includeSecrets, includeAux, autoBackup, backupIntervalMinutes, backupRetryMinutes, autoBackupPush; also reports scheduler state when called without arguments |
 
 Config is stored at `~/.dsh/dsh-backup-migrator.json` (mode 0600).
 
@@ -71,12 +71,13 @@ No button to remember and no external launchd job needed: turn the switch on and
 ```text
 dshbackup_config autoBackup: true                 # master switch (off by default)
 dshbackup_config backupIntervalMinutes: 1440      # minutes, minimum 15, default 1440 (daily)
+dshbackup_config backupRetryMinutes: 30           # retry gap after a failure, minimum 5, default 30
 dshbackup_config autoBackupPush: false            # optional: local commits only, never push
 ```
 
 - **Missed windows are caught up**: due-ness is computed from "last attempt + interval", so after the machine slept or DSH was closed the next check on startup/wake runs the missed backup (the loop wakes about once a minute).
 - **Config changes apply immediately** — the switch and interval are re-read on every check; no GUI restart.
-- **Failures do not hammer**: a failed run also waits a full interval before retrying, consecutive failures are counted, and 3 in a row get called out in the log.
+- **Failures retry — and are never reported as success**: a run only counts as successful when it fully lands (build, commit **and** push). A failed run retries after `backupRetryMinutes` (default 30) instead of waiting a whole interval, so a network blip does not push your backup to tomorrow; 3 consecutive failures are called out in the log. (The first release counted a failed *push* as `ok: true` and reset the failure counter — i.e. silently losing backups; fixed.)
 - **Never concurrent**: if a backup is still running, the check is skipped.
 - **Observable**: `dshbackup_config` (no args) and `GET /status` both report last attempt / last success / consecutive failures / next expected run. State lives in `~/.dsh/dsh-backup-migrator-state.json` (machine-local runtime state, **never backed up**).
 
