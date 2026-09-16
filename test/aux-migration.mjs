@@ -120,14 +120,28 @@ try {
 
   /* ---------------- 4. 恢复出来的脚本能 stage ---------------- */
   const env = { ...process.env, HOME: sandboxHome, DSH_HOME: sandboxDsh }
+  // 恢复出来的队列**不是空的**：`~/.dsh/dsh-ticktick-pending.json` 匹配 `dsh-*.json`
+  // 会被当插件配置一起备份/恢复，所以沙箱队列里带着**源机器当时的待同步任务**。
+  // 因此断言必须是「stage 后比 stage 前多 1 条」，不能写死 `待同步任务 : 1`
+  //（写死只在源机器队列恰好为空时通过——在别人电脑上会假失败）。
+  const pendingCount = (out) => {
+    const m = /待同步任务\s*:\s*(\d+)/.exec(out || '')
+    return m ? Number(m[1]) : NaN
+  }
+  const before = await exec(process.execPath, [scriptDest, 'status'], { env })
+  const beforeCount = pendingCount(before.stdout + before.stderr)
+  if (!Number.isFinite(beforeCount)) fail(`stage 前无法解析待同步数：\n${before.stdout}${before.stderr}`)
+  else ok(`恢复出的队列已带源机器的待同步任务：${beforeCount} 条（断言按增量比较）`)
+
   const staged = await exec(process.execPath, [
     scriptDest, 'stage', '--by', 'aux-migration-test',
     '--json', JSON.stringify([{ title: '换机验证任务', content: '来源：aux-migration 测试；背景：验证恢复后的延迟同步能 stage；完成标准：status 能看到它' }]),
   ], { env })
   const status = await exec(process.execPath, [scriptDest, 'status'], { env })
   const statusOut = status.stdout + status.stderr
-  if (!statusOut.includes('待同步任务   : 1')) fail(`stage 后 status 未显示 1 条待同步：\n${statusOut}`)
-  else ok('恢复后的脚本 stage + status 通过（延迟同步「暂存」链路可用）')
+  const afterCount = pendingCount(statusOut)
+  if (afterCount !== beforeCount + 1) fail(`stage 后待同步数应为 ${beforeCount + 1}，实际 ${afterCount}：\n${statusOut}`)
+  else ok(`恢复后的脚本 stage + status 通过（${beforeCount} → ${afterCount}，延迟同步「暂存」链路可用）`)
 
   // flush 在无凭据时安全跳过（证明定时器调用的命令能跑通、不会崩）
   const flush = await exec(process.execPath, [scriptDest, 'flush'], { env }).catch((e) => ({ stdout: e.stdout || '', stderr: e.stderr || '' }))
