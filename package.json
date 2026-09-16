@@ -1,7 +1,7 @@
 {
   "name": "dsh-backup-migrator",
-  "version": "0.2.0",
-  "description": "Backup and migrate DeepSeek Harness plugin environments via GitHub: one command exports the installed plugin manifest, plugin configs and locally-developed plugin sources into a git repository, and another restores everything on a new machine (VSCode-settings-sync style).",
+  "version": "0.3.0",
+  "description": "Backup and migrate DeepSeek Harness plugin environments via GitHub: one command exports the installed plugin manifest, plugin configs and locally-developed plugin sources into a git repository, and another restores everything on a new machine (VSCode-settings-sync style). Ships an optional built-in scheduler that backs up automatically at a configurable interval.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -17,7 +17,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/load-test.mjs && node test/aux-migration.mjs",
+    "test": "node test/load-test.mjs && node test/aux-migration.mjs && node test/schedule-test.mjs",
     "verify": "node scripts/portability.mjs --health /api/dsh-backup-migrator/probe --stability 15",
     "verify:full": "node scripts/portability.mjs --health /api/dsh-backup-migrator/probe --stability 30",
     "verify:quick": "node scripts/portability.mjs --skip-audit --stability 5 --health /api/dsh-backup-migrator/probe"
@@ -32,9 +32,11 @@
     "backup",
     "migrate",
     "sync",
+    "scheduled",
     "github",
     "插件备份",
-    "迁移"
+    "迁移",
+    "定时备份"
   ],
   "license": "MIT",
   "repository": {

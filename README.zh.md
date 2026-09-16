@@ -6,6 +6,7 @@
 
 - **一条命令备份**：扫描本机各 profile 的插件清单（dependencies + bundles 加载顺序）、`~/.dsh/dsh-*.json` 插件配置（0600）、**本地开发的插件**（`link:`/`file:` 源，自动 `npm pack` 成 tgz 一起带走，换机器不会丢），以及**插件体系之外的机器级附属资产**（`~/.dsh/scripts` 下的 helper 脚本 + `~/Library/LaunchAgents/com.dsh.*.plist` 定时器，如滴答清单延迟同步）→ `git commit` + `git push`。
 - **一条命令恢复**：新机器 clone 同一仓库 → 按来源自动重装（npm/github 源联网重装，本地源用仓库里的 tgz 离线安装）→ 写回 `dsh.profile.bundles`、用户 patch 层 `cordis.patch.yml` 和配置文件 → 脚本 / plist 落位（源机器 home 路径与 node 解释器自动重写，plist 自动 `launchctl load`）。
+- **可选的内置定时备份**：打开 `autoBackup` 后按间隔自动备份（默认一天一次），睡过/关过的窗口会在下次启动时补跑，不再靠手动或外挂 launchd。
 - 备份历史 = git 历史，哪天都能回滚。
 
 ## 为什么本地插件要打包？
@@ -59,14 +60,32 @@ dshbackup_config repoUrl: git@github.com:user/dsh-backup.git
 | `dshbackup_restore` | 拉取备份仓库 → 重装全部插件 → 恢复配置与脚本/定时器 |
 | `dshbackup_verify` | 备份前/恢复前预检（源可恢复性、git remote、敏感配置、aux 是否齐备） |
 | `dshbackup_list` | 备份历史（git log）+ 最新备份摘要 |
-| `dshbackup_config` | 查看/修改 backupDir、repoUrl、includeSecrets、includeAux |
+| `dshbackup_config` | 查看/修改 backupDir、repoUrl、includeSecrets、includeAux、autoBackup、backupIntervalMinutes、autoBackupPush；不带参数时同时显示定时备份状态 |
 
 配置存 `~/.dsh/dsh-backup-migrator.json`（0600）。
+
+### 内置定时备份
+
+不用自己按按钮，也不用外挂 launchd：打开开关后，插件在宿主进程内按时自动执行**与手动完全等价**的备份（同一个代码路径）。
+
+```text
+dshbackup_config autoBackup: true                 # 总开关（默认关）
+dshbackup_config backupIntervalMinutes: 1440      # 间隔分钟数，最小 15，默认 1440（一天）
+dshbackup_config autoBackupPush: false            # 可选：只留本地提交，不自动 push
+```
+
+- **错过的窗口会补跑**：判定基于「上次尝试时间 + 间隔」，所以机器睡过、DSH 关过之后，**下次启动或唤醒的第一个检查点**就会补上（周期 tick，约每分钟检查一次）。
+- **改配置即时生效**：间隔与开关每个检查点重新读取，不需要重启 GUI。
+- **失败不刷屏**：失败也等满一个完整间隔再重试，并记录连续失败次数；连续失败 3 次会在日志里点名提示。
+- **绝不并发**：上一次备份还在跑时，本次检查直接跳过。
+- **状态可查**：`dshbackup_config`（不带参数）与 `GET /status` 都会返回上次尝试 / 上次成功 / 连续失败 / 下次预计时间；状态写 `~/.dsh/dsh-backup-migrator-state.json`（机器本地运行时状态，**不参与备份**）。
+
+> 定时备份会把配置里的凭据一并推送到远端（`includeSecrets: true` 时）——请确认备份仓库是**私有**的；不放心就先设 `autoBackupPush: false`，让它只留本地提交。
 
 ### HTTP 接口（loopback-only，供外部 Agent / 验证工具探活）
 
 - `GET /api/dsh-backup-migrator/probe` —— 存活探针，返回 `{ ok, plugin, version }`
-- `GET /api/dsh-backup-migrator/status` —— 只读：当前配置 + 最新备份摘要（含 aux 清单）
+- `GET /api/dsh-backup-migrator/status` —— 只读：当前配置 + 最新备份摘要（含 aux 清单）+ 定时备份状态
 
 ### 备份仓库结构
 
