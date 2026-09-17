@@ -4,7 +4,7 @@
 
 Backup and migrate your DeepSeek Harness plugin environment via a git repository on GitHub — VSCode settings-sync style.
 
-- **One command backup**: scan every profile's installed plugins (manifest + load order), plugin configs under `~/.dsh/dsh-*.json` (0600), **locally-developed plugins** (`link:`/`file:` sources — the local ones are automatically packed into tarballs so they survive on another machine), and **machine-level aux assets outside the plugin system** (helper scripts under `~/.dsh/scripts` + `com.dsh.*.plist` launchd timers under `~/Library/LaunchAgents`, e.g. TickTick deferred sync) — then `git commit` + `git push`.
+- **One command backup — environment *and* you**: ①**plugin environment** (per-profile manifests + load order, `~/.dsh/dsh-*.json` configs, locally-developed plugins packed into tarballs); ②**assets outside the plugin system** (helper scripts under `~/.dsh/scripts` + `com.dsh.*.plist` launchd timers); ③**the user-content layer** — `~/.agents/skills`, `~/.dsh/.agent-presets`, `~/.dsh/adapters`, `~/.dsh/AGENTS.md`, `~/.dsh/settings.yaml`, `~/.mnemon/runtime` (memory) and `~/.mnemon/documents` (distilled notes) — then `git commit` + `git push`. **Missing entries are skipped**, so it works on anyone's machine.
 - **One command restore**: on a new machine, pull/clone the same repo, reinstall every plugin by source (npm/github reinstall online; local sources install offline from the packed tarballs), write back `dsh.profile.bundles`, the user patch layer `cordis.patch.yml` and the config files, then drop the scripts/plists back in place (source-machine home paths and the node interpreter are rewritten, and plists are `launchctl load`ed automatically).
 - **Optional built-in scheduler**: switch on `autoBackup` and backups run on an interval (daily by default) — no manual button and no external launchd job; windows missed while the machine slept are caught up on the next start.
 - Backup history = git history (rollback any day).
@@ -97,7 +97,11 @@ dshbackup_config autoBackupPush: false            # optional: local commits only
 ├── profiles/<name>/cordis.patch.yml   # user patch layer (if any)
 ├── profiles/<name>/packages/*.tgz     # locally-sourced plugins (npm pack)
 ├── configs/...                  # ~/.dsh/dsh-*.json + dsh-* dirs (0600)
-└── aux/                         # scripts/ (helper scripts) + launchagents/ (com.dsh.*.plist)
+└── aux/                         # assets outside the plugin system, by kind:
+    ├── scripts/                 #   helper scripts (0755)
+    ├── launchagents/            #   com.dsh.*.plist timers (macOS)
+    ├── files/                   #   single-file user content (AGENTS.md, settings.yaml)
+    └── dirs/<id>/               #   directory trees (skills, agent-presets, adapters, memory, notes)
 ```
 
 ### On a new machine

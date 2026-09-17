@@ -4,7 +4,7 @@
 
 把 DeepSeek Harness 的插件环境备份/迁移到 GitHub 云端——VSCode 设置同步同款体验。
 
-- **一条命令备份**：扫描本机各 profile 的插件清单（dependencies + bundles 加载顺序）、`~/.dsh/dsh-*.json` 插件配置（0600）、**本地开发的插件**（`link:`/`file:` 源，自动 `npm pack` 成 tgz 一起带走，换机器不会丢），以及**插件体系之外的机器级附属资产**（`~/.dsh/scripts` 下的 helper 脚本 + `~/Library/LaunchAgents/com.dsh.*.plist` 定时器，如滴答清单延迟同步）→ `git commit` + `git push`。
+- **一条命令备份 · 环境 + 你**：①**插件环境**——各 profile 的插件清单（dependencies + bundles 加载顺序）、`~/.dsh/dsh-*.json` 插件配置（0600）、**本地开发的插件**（`link:`/`file:` 源，自动 `npm pack` 成 tgz，换机器不会丢）；②**插件体系外的资产**——`~/.dsh/scripts` 下的 helper 脚本 + `~/Library/LaunchAgents/com.dsh.*.plist` 定时器；③**用户内容层**——`~/.agents/skills`（skill 库）、`~/.dsh/.agent-presets`（Agent 预设）、`~/.dsh/adapters`（自定义适配器）、`~/.dsh/AGENTS.md`（全局规则）、`~/.dsh/settings.yaml`（设置）、`~/.mnemon/runtime`（记忆）与 `~/.mnemon/documents`（沉淀文档）→ `git commit` + `git push`。**不存在的项自动跳过**，所以别人的机器也能直接用。
 - **一条命令恢复**：新机器 clone 同一仓库 → 按来源自动重装（npm/github 源联网重装，本地源用仓库里的 tgz 离线安装）→ 写回 `dsh.profile.bundles`、用户 patch 层 `cordis.patch.yml` 和配置文件 → 脚本 / plist 落位（源机器 home 路径与 node 解释器自动重写，plist 自动 `launchctl load`）。
 - **可选的内置定时备份**：打开 `autoBackup` 后按间隔自动备份（默认一天一次），睡过/关过的窗口会在下次启动时补跑，不再靠手动或外挂 launchd。
 - 备份历史 = git 历史，哪天都能回滚。
@@ -12,6 +12,14 @@
 ## 为什么本地插件要打包？
 
 DSH 插件有四种来源：npm registry、`github:user/repo#commit`、`link:<本地路径>`、`file:<tgz>`。换机器后 `link:`/`file:` 的本地路径不存在，不打包就会丢。本插件自动识别并逐个 `npm pack` 进备份仓库。
+
+## 为什么连「你」也要备份？
+
+只备份插件环境，换机后得到的是一个**能跑但不像你**的 DSH：skill 没有、预设没有、全局规则还是默认的、记忆归零——环境回来了，"你"没回来。
+
+所以这一层和脚本/定时器一样进同一张资产注册表（`lib/aux.js` 的 `DEFAULT_AUX_ASSETS`）：**每一项都是可选的**，本机不存在就只记一条警告、跳过，不会让备份失败。用 `includeUserContent: false` 可以整体关掉（比如你不想把记忆推进仓库）。
+
+目录类资产（skill / 预设 / 记忆 / 沉淀文档）是**镜像**语义：恢复时若目标目录已存在，会先把它整体挪到 `<目录>.bak-<时间戳>` 再写入，**不会静默吃掉你当前的内容**。文本文件里的源机器 home 路径与 node 解释器会被自动重写；二进制文件（如 skill 里的图片）原样搬运，不经过文本重写。
 
 ## 为什么还要备份「脚本 + launchd 定时器」？
 
@@ -97,7 +105,11 @@ dshbackup_config autoBackupPush: false            # 可选：只留本地提交�
 ├── profiles/<name>/cordis.patch.yml   # 用户 patch 层（如有）
 ├── profiles/<name>/packages/*.tgz     # 本地源插件（npm pack）
 ├── configs/...                  # ~/.dsh/dsh-*.json + dsh-* 目录（0600）
-└── aux/                         # scripts/（helper 脚本）+ launchagents/（com.dsh.*.plist）
+└── aux/                         # 插件体系外的资产，按类型分层：
+    ├── scripts/                 #   helper 脚本（0755）
+    ├── launchagents/            #   com.dsh.*.plist 定时器（macOS）
+    ├── files/                   #   单文件用户内容（AGENTS.md、settings.yaml）
+    └── dirs/<id>/               #   目录树（skills、agent-presets、adapters、记忆、沉淀文档）
 ```
 
 ### 新机器恢复

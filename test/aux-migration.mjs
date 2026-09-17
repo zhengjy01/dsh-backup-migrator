@@ -9,13 +9,15 @@
  *   4. 定时：恢复出来的 plist 能被 launchctl 接受（用唯一 Label 的副本测试，
  *      不动本机真实 com.dsh.ticktick-deferred-sync 任务）
  *   5. 真实备份链路：buildBackup 的产物里确实带 aux/
+ *   6. 用户内容层（group: 'user'）：目录树（skill / 预设 / 记忆 / 沉淀文档）
+ *      完整往返、二进制不被文本重写破坏、目标已存在时先挪到 .bak-<时间戳>
  *
  * 运行：node test/aux-migration.mjs
  * 说明：默认不做 profiles 的 pnpm 重装（manifest.profiles 置空），只验证
  *       configs + aux 这条链路；临时目录测完自动删除。
  */
 
-import { mkdtemp, mkdir, rm, readFile, writeFile, stat, cp } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, readFile, writeFile, stat, cp, readdir } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { homedir, tmpdir } from 'node:os'
@@ -23,7 +25,7 @@ import path from 'node:path'
 
 import { buildBackup, restoreBackup, verifyBackup } from '../lib/ops.js'
 import { gitInit } from '../lib/git.js'
-import { collectAuxAssets, DEFAULT_AUX_ASSETS, rewriteAuxText } from '../lib/aux.js'
+import { collectAuxAssets, DEFAULT_AUX_ASSETS, rewriteAuxText, restoreAuxAssets } from '../lib/aux.js'
 
 const exec = promisify(execFile)
 const log = (m) => console.log('[aux-migration]', m)
@@ -53,8 +55,10 @@ try {
   else ok(`manifest.aux 含 ${auxCount} 项（sourceHome=${manifest.aux.sourceHome}）`)
   if (manifest.aux.sourceHome !== sourceHome) fail(`sourceHome 记录错误：${manifest.aux.sourceHome}`)
   for (const a of manifest.aux.items) {
+    // 目录资产（skill / 记忆 / 沉淀文档）在备份里是目录，不是文件
     const f = path.join(backupDir, a.file)
-    if (!(await stat(f).then((s) => s.isFile()).catch(() => false))) fail(`备份缺少 ${a.file}`)
+    const okKind = await stat(f).then((s) => (a.kind === 'dir' ? s.isDirectory() : s.isFile())).catch(() => false)
+    if (!okKind) fail(`备份缺少 ${a.file}`)
   }
 
   /* ---------------- 2. 准备隔离的恢复源 + 干净 HOME ---------------- */
@@ -86,6 +90,63 @@ try {
   const restoredIds = (res.aux.restored || []).map((a) => a.id)
   if (restoredIds.length !== auxCount) fail(`恢复 ${restoredIds.length} 项，期望 ${auxCount}：${JSON.stringify(res.aux)}`)
   else ok(`aux 全部恢复：${restoredIds.join('、')}`)
+
+  /* ---------------- 3b. 目录类资产（用户内容层）---------------- */
+  const countFiles = async (dir) => {
+    let n = 0
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      if (e.name === '.DS_Store' || e.name === 'node_modules' || e.name === '.git') continue
+      const p = path.join(dir, e.name)
+      const st = await stat(p)
+      if (st.isDirectory()) n += await countFiles(p)
+      else n += 1
+    }
+    return n
+  }
+  const findExt = async (dir, ext) => {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      const st = await stat(p)
+      if (st.isDirectory()) { const r = await findExt(p, ext); if (r) return r } else if (e.name.endsWith(ext)) return p
+    }
+    return null
+  }
+
+  const skillsSrc = path.join(sourceHome, '.agents', 'skills')
+  const skillsDst = path.join(sandboxHome, '.agents', 'skills')
+  const srcCount = await countFiles(skillsSrc)
+  const dstCount = await countFiles(skillsDst).catch(() => -1)
+  if (srcCount !== dstCount) fail(`skills 目录文件数不一致：源 ${srcCount} vs 恢复 ${dstCount}`)
+  else ok(`目录资产完整恢复：skills ${dstCount} 个文件`)
+
+  const userMdSrc = await readFile(path.join(sourceHome, '.mnemon', 'runtime', 'USER.md'))
+  const userMdDst = await readFile(path.join(sandboxHome, '.mnemon', 'runtime', 'USER.md')).catch(() => null)
+  if (!userMdDst || Buffer.compare(userMdSrc, userMdDst) !== 0) fail('mnemon/runtime/USER.md 与源不一致')
+  else ok('记忆文件按原文恢复（USER.md 字节一致）')
+
+  // 二进制资产必须原样搬运：不能被「文本重写」污染
+  const pngSrc = await findExt(skillsSrc, '.png')
+  if (pngSrc) {
+    const pngDst = path.join(skillsDst, path.relative(skillsSrc, pngSrc))
+    const [a, b] = [await readFile(pngSrc), await readFile(pngDst).catch(() => null)]
+    if (!b || Buffer.compare(a, b) !== 0) fail(`二进制资产被破坏：${path.relative(skillsSrc, pngSrc)}`)
+    else ok(`二进制资产原样搬运（${path.relative(skillsSrc, pngSrc)}）`)
+  }
+
+  // 覆盖保护：目标已存在时先挪到 .bak-<时间戳>，而不是直接删掉
+  const marker = path.join(skillsDst, 'MARKER-SHOULD-BE-MOVED.txt')
+  await writeFile(marker, 'x')
+  await restoreAuxAssets(restoreDir, rManifest, { homeDir: sandboxHome, dshHome: sandboxDsh, loadAgents: false, log: () => {} })
+  const agentsDir = path.join(sandboxHome, '.agents')
+  const backups = (await readdir(agentsDir)).filter((n) => n.startsWith('skills.bak-'))
+  if (!backups.length) fail('覆盖保护失效：没生成 skills.bak-<时间戳>')
+  else {
+    const kept = await stat(path.join(agentsDir, backups[0], 'MARKER-SHOULD-BE-MOVED.txt')).catch(() => null)
+    const gone = await stat(marker).catch(() => null)
+    if (!kept) fail('挪到一边的目录里没有保留原文件')
+    else if (gone) fail('恢复后的目录里不该留有本机原有的标记文件')
+    else ok(`覆盖保护生效：原内容挪到 ${backups[0]}，恢复目录是干净镜像`)
+  }
 
   const scriptDest = path.join(sandboxDsh, 'scripts', 'ticktick-pending.mjs')
   const plistDest = path.join(sandboxHome, 'Library', 'LaunchAgents', 'com.dsh.ticktick-deferred-sync.plist')
