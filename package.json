@@ -1,6 +1,6 @@
 {
   "name": "dsh-backup-migrator",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Backup and migrate DeepSeek Harness plugin environments via GitHub: one command exports the installed plugin manifest, plugin configs and locally-developed plugin sources into a git repository, and another restores everything on a new machine (VSCode-settings-sync style). Ships an optional built-in scheduler that backs up automatically at a configurable interval.",
   "type": "module",
   "main": "lib/index.js",
