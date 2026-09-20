@@ -23,6 +23,15 @@ Some DSH side-services deliberately live outside the plugin system — TickTick 
 
 A plugin-environment-only backup silently dropped the script and the timer on migration. They now travel in the repo's `aux/` directory: on restore the recorded source home is rewritten to the target home (`/Users/alice` → `/Users/bob`), the node interpreter falls back to this machine's node when the recorded one is absent, files land at their original locations, and plists are `launchctl load -w`ed.
 
+The same registry also carries **blog sync** (created 2026-09-19, after a task-board cron silently skipped for days):
+
+- `~/Library/LaunchAgents/com.dsh.blog-sync.plist` (21:00 main + 09:00 fallback + `RunAtLoad`)
+- `~/dsh-blog-sync/after-blog-sync.sh` (the real entry point: article sync with retry → card refresh)
+- `~/dsh-blog-sync/sync_blog_notion.mjs` (current Node fetch sync), `sync_blog_notion.py` (legacy, kept for rollback)
+- `~/dsh-blog-sync/sync_now.mjs` + `now.config.json` (refresh the "what I'm doing" card)
+
+> **Timer and scripts must be backed up together**: a plist without its scripts fires on schedule but fails every run — a different flavour of silent failure.
+
 
 ## Compatibility
 

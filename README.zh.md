@@ -31,6 +31,15 @@ DSH 插件有四种来源：npm registry、`github:user/repo#commit`、`link:<�
 
 早先只备份插件环境时，换机会静默丢掉脚本和定时器。现在它们进入备份仓库的 `aux/` 目录：恢复时按记录的源 home 重写路径（`/Users/alice` → `/Users/bob`）、把 node 解释器换成本机的 node、写回原位置，并自动 `launchctl load -w`。
 
+同一张表还纳入了 **博客同步**（2026-09-19 会话「博客同步静默失效排查」新建，看板 cron 不可靠后改挂 launchd）：
+
+- `~/Library/LaunchAgents/com.dsh.blog-sync.plist`（21:00 主 + 09:00 兜底 + `RunAtLoad`；睡眠唤醒后补跑）
+- `~/dsh-blog-sync/after-blog-sync.sh`（plist 的真正入口：文章同步带重试 → 刷新卡片）
+- `~/dsh-blog-sync/sync_blog_notion.mjs`（现行 Node fetch 同步）、`sync_blog_notion.py`（旧版，保留作回滚）
+- `~/dsh-blog-sync/sync_now.mjs` + `now.config.json`（刷新「最近在做什么」卡片）
+
+> **plist 与脚本必须成对备份**：只带定时器不带脚本，换机后定时器会照点唤起却每次报找不到文件——那是另一种形态的静默失效。
+
 
 ## 兼容性
 
