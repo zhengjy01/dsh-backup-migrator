@@ -166,6 +166,16 @@ launchctl load -w ~/Library/LaunchAgents/com.dsh.ticktick-deferred-sync.plist
 - 插件配置常含 API key/token（flomo、ticktick、npm……）。`includeSecrets` 默认 `true`——**请使用私有备份仓库**，或设 `includeSecrets: false` 排除敏感文件；`dshbackup_verify` 会列出哪些文件被标记为敏感。
 - 配置文件保持 0600 权限。
 
+## 备份什么、不备份什么（运行时目录）
+
+备份只带**配置**，不带**运行时数据**——否则每轮都要在宿主进程里搬几百 MB，界面会卡。
+
+- **不整目录收集**：`~/.dsh/dsh-runtimes`（插件运行时，Python+Node+pnpm，约 360 MB）、`dsh-pocket`、`dsh-provider-usage`、`dsh-usage-hud`、`dsh-config-manager`、`dsh-restart`、`dsh-updater`、`dsh-skill-recommender`，以及任何**超过 4 MB** 的其它 `dsh-*` 目录（防止新装插件又把备份撑大）。
+- **但这些目录里的小配置会保留**：顶层 `*.json` 且单个 ≤ 64 KB（例如 `dsh-updater/config.json` 的更新通道、`dsh-skill-recommender/config.json` 的匹配指数与权重）。`token`/`credentials` 之类**永不进备份**，`status.json`/`history.json`/`logs/`/`reports/`/`trend/` 属状态数据也不进。
+- 跳过的每一项都会写进备份结果的 `warnings` 与 `manifest.configs`（带 `runtime` 与 `kept` 字段），`dshbackup_verify` 也会显示——**不静默**。
+
+> 效果：本机实测 `configs/` 从约 400 MB 降到约 1.3 MB，而用户可调设置（更新通道、匹配指数、重启选项、用量适配器）一个不丢。
+
 ## License
 
 MIT

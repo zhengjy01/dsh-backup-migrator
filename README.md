@@ -158,6 +158,16 @@ launchctl load -w ~/Library/LaunchAgents/com.dsh.ticktick-deferred-sync.plist
 - Plugin configs often contain API keys/tokens (flomo, ticktick, npm...). `includeSecrets` defaults to `true` — **use a private backup repo**, or set `includeSecrets: false` to exclude secret-flagged files. `dshbackup_verify` lists which files are secret-flagged.
 - Config files keep mode 0600.
 
+## What is backed up (and what is not): runtime dirs
+
+A backup carries **configuration**, not **runtime data** — otherwise every round copies hundreds of MB inside the host process and freezes the UI.
+
+- **Never collected wholesale**: `~/.dsh/dsh-runtimes` (plugin runtime: Python+Node+pnpm, ~360 MB), `dsh-pocket`, `dsh-provider-usage`, `dsh-usage-hud`, `dsh-config-manager`, `dsh-restart`, `dsh-updater`, `dsh-skill-recommender`, plus any other `dsh-*` directory **above 4 MB** (so a newly installed plugin cannot blow the backup up again).
+- **Their small settings are still kept**: top-level `*.json` files of at most 64 KB each (e.g. `dsh-updater/config.json` — update channel; `dsh-skill-recommender/config.json` — match index/weights). `token`/`credentials`-like files **never** enter a backup; `status.json`/`history.json`/`logs/`/`reports/`/`trend/` are state and are left behind.
+- Every skip is reported in the backup result's `warnings` and in `manifest.configs` (with `runtime` + `kept` fields), and surfaced by `dshbackup_verify` — **never silent**.
+
+> Measured on this machine: `configs/` dropped from ~400 MB to ~1.3 MB with no loss of user-tunable settings (update channel, match index, restart options, usage adapters).
+
 ## License
 
 MIT

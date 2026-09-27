@@ -25,7 +25,7 @@ import path from 'node:path'
 
 import { buildBackup, restoreBackup, verifyBackup } from '../lib/ops.js'
 import { gitInit } from '../lib/git.js'
-import { collectAuxAssets, DEFAULT_AUX_ASSETS, rewriteAuxText, restoreAuxAssets } from '../lib/aux.js'
+import { collectAuxAssets, DEFAULT_AUX_ASSETS, auxSourcePath, rewriteAuxText, restoreAuxAssets } from '../lib/aux.js'
 
 const exec = promisify(execFile)
 const log = (m) => console.log('[aux-migration]', m)
@@ -51,8 +51,22 @@ try {
   const manifest = JSON.parse(await readFile(path.join(backupDir, 'manifest.json'), 'utf8'))
   auxCount = (manifest.aux && manifest.aux.items || []).length
   log(`buildBackup: profiles=${built.profiles.length} configs=${built.configs.included} aux=${auxCount}`)
-  if (auxCount < DEFAULT_AUX_ASSETS.length) fail(`manifest.aux 只有 ${auxCount} 项，期望 ${DEFAULT_AUX_ASSETS.length}`)
-  else ok(`manifest.aux 含 ${auxCount} 项（sourceHome=${manifest.aux.sourceHome}）`)
+  // 期望项数按「本机真实存在的默认资产」算，而不是 DEFAULT_AUX_ASSETS.length：
+  // 该常量是跨版本的超集，DSH 升级会新增/移除文件（例：0.1.7 起
+  // ~/.dsh/settings.yaml 已不再由 DSH 生成，旧断言会恒定失败）。
+  // 收集器对缺失资产本来就跳过并记 warning，这里同步这一事实。
+  const expectedAux = []
+  for (const a of DEFAULT_AUX_ASSETS) {
+    const src = auxSourcePath(a)
+    const wantDir = a.kind === 'dir'
+    const exists = await stat(src).then((s) => (wantDir ? s.isDirectory() : s.isFile())).catch(() => false)
+    if (exists) expectedAux.push(a.id)
+  }
+  if (auxCount < expectedAux.length) {
+    fail(`manifest.aux 只有 ${auxCount} 项，期望 ${expectedAux.length}（本机存在的默认资产）`)
+  } else {
+    ok(`manifest.aux 含 ${auxCount} 项（sourceHome=${manifest.aux.sourceHome}；默认清单 ${DEFAULT_AUX_ASSETS.length} 项，本机缺 ${DEFAULT_AUX_ASSETS.length - expectedAux.length} 项）`)
+  }
   if (manifest.aux.sourceHome !== sourceHome) fail(`sourceHome 记录错误：${manifest.aux.sourceHome}`)
   for (const a of manifest.aux.items) {
     // 目录资产（skill / 记忆 / 沉淀文档）在备份里是目录，不是文件
